@@ -153,19 +153,28 @@ class AimBot:
                     best = targets[0]
 
                     if self.cfg.game_mode:
-                        # 游戏模式：准心在帧中心，计算偏移量，发送相对位移
                         frame_h, frame_w = frame.shape[:2]
                         dx = best.cx - frame_w // 2
                         dy = best.cy - frame_h // 2
+
+                        # 偏移量超过上限视为误检，跳过本帧
+                        cap = self.cfg.max_move_px
+                        if cap > 0 and (abs(dx) > cap or abs(dy) > cap):
+                            continue
+
                         self.mouse.move_relative_and_click(dx, dy)
                     else:
-                        # 桌面模式：移动到绝对屏幕坐标
                         sx, sy = MouseController.frame_to_screen(
                             best.cx, best.cy, *self.capture.offset
                         )
                         self.mouse.move_and_click(sx, sy)
 
                     self._stats_hits += 1
+
+                    # 点击后冷却：等目标消失动画播完再截下一帧，
+                    # 避免重复检测同一个目标导致准心累积漂移
+                    if self.cfg.post_click_cooldown > 0:
+                        time.sleep(self.cfg.post_click_cooldown)
 
                 if self._show_preview:
                     vis = self.detector.draw_debug(frame, targets)

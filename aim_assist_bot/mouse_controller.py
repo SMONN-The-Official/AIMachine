@@ -89,11 +89,14 @@ if _IS_WIN32:
     def _set_cursor_pos(x: int, y: int):
         _user32.SetCursorPos(x, y)
 
-    # ── 点击 ────────────────────────────────────────────────────
-    def _click():
-        down = _make_mouse_input(flags=_MOUSEEVENTF_LEFTDOWN)
-        up = _make_mouse_input(flags=_MOUSEEVENTF_LEFTUP)
-        _send_input(down, up)
+    # ── 点击（down 和 up 必须分开发送，中间留持续时间）────────
+    def _mouse_down():
+        inp = _make_mouse_input(flags=_MOUSEEVENTF_LEFTDOWN)
+        _send_input(inp)
+
+    def _mouse_up():
+        inp = _make_mouse_input(flags=_MOUSEEVENTF_LEFTUP)
+        _send_input(inp)
 
 # ═══════════════════════════════════════════════════════════════
 # 跨平台后端：pyautogui（延迟导入）
@@ -123,9 +126,12 @@ else:
         pag = _ensure_pyautogui()
         pag.moveTo(x, y, _pause=False)
 
-    def _click():
+    def _mouse_down():
         pag = _ensure_pyautogui()
         pag.mouseDown(_pause=False)
+
+    def _mouse_up():
+        pag = _ensure_pyautogui()
         pag.mouseUp(_pause=False)
 
 
@@ -138,13 +144,23 @@ class MouseController:
         self._cfg = cfg
 
     # ── 游戏模式：相对位移 ──────────────────────────────────────
-    def move_relative(self, dx: int, dy: int):
+    def move_relative(self, dx: int, dy: int) -> bool:
         """
-        发送相对鼠标位移。游戏模式核心函数。
+        发送相对鼠标位移。
 
-        dx, dy 是像素偏移量（目标位置 - 准心位置），
-        乘以 sensitivity 倍率后经 SendInput 发送给系统。
+        返回 True 表示发送了移动，False 表示在死区内未移动。
+        dx, dy 是屏幕像素偏移量（目标 - 准心）。
         """
+        # 死区：目标已足够接近准心，不再移动
+        if abs(dx) <= self._cfg.dead_zone and abs(dy) <= self._cfg.dead_zone:
+            return False
+
+        # 最大偏移量限制：防止误检导致准心飞出屏幕
+        cap = self._cfg.max_move_px
+        if cap > 0:
+            dx = max(-cap, min(cap, dx))
+            dy = max(-cap, min(cap, dy))
+
         s = self._cfg.sensitivity
         real_dx = int(round(dx * s))
         real_dy = int(round(dy * s))
@@ -154,15 +170,32 @@ class MouseController:
         else:
             _move_relative(real_dx, real_dy)
 
-    def click(self):
-        _click()
-        if self._cfg.click_delay > 0:
-            time.sleep(self._cfg.click_delay)
+        return True
 
-    def move_relative_and_click(self, dx: int, dy: int):
-        """移动相对偏移并点击（游戏模式主调用）。"""
-        self.move_relative(dx, dy)
+    def click(self):
+        """
+        执行一次完整的左键点击。
+        down 和 up 分开发送，中间保持按住状态一段时间，
+        确保游戏能识别为有效点击。
+        """
+        _mouse_down()
+        time.sleep(self._cfg.click_hold_time)
+        _mouse_up()
+
+    def move_relative_and_click(self, dx: int, dy: int) -> bool:
+        """
+        移动到目标并点击（游戏模式主调用）。
+
+        返回 True 表示执行了移动+点击，False 表示目标在死区内（仅点击）。
+        """
+        moved = self.move_relative(dx, dy)
+
+        # 移动后等一小段时间让游戏处理完位移再点击
+        if moved:
+            time.sleep(self._cfg.move_click_gap)
+
         self.click()
+        return moved
 
     # ── 桌面模式：绝对坐标 ──────────────────────────────────────
     def move_to(self, x: int, y: int):
@@ -172,8 +205,8 @@ class MouseController:
             _set_cursor_pos(x, y)
 
     def move_and_click(self, x: int, y: int):
-        """移动到绝对坐标并点击（桌面模式）。"""
         self.move_to(x, y)
+        time.sleep(self._cfg.move_click_gap)
         self.click()
 
     def get_position(self) -> Tuple[int, int]:

@@ -150,8 +150,11 @@ cfg.min_target_area = 50
 cfg.min_circularity = 0.4
 
 # 鼠标行为
-cfg.smooth_steps = 2
-cfg.click_delay = 0.005
+cfg.click_hold_time = 0.03      # 左键按住时长（秒）
+cfg.move_click_gap = 0.01       # 移动到点击的间隔
+cfg.post_click_cooldown = 0.06  # 点击后冷却
+cfg.dead_zone = 3               # 死区半径（像素）
+cfg.max_move_px = 500           # 单帧最大移动量
 ```
 
 ## 项目结构
@@ -160,7 +163,7 @@ cfg.click_delay = 0.005
 aim_assist_bot/
 ├── main.py              # 主程序入口、CLI 参数、主循环
 ├── config.py            # 配置参数与颜色预设
-├── screen_capture.py    # 屏幕捕获模块 (mss)
+├── screen_capture.py    # 屏幕捕获模块 (dxcam / mss)
 ├── target_detector.py   # 目标检测模块（HSV 颜色 + 亮度差异双模式）
 ├── mouse_controller.py  # 鼠标控制模块（Win32 / pyautogui）
 ├── hotkey_manager.py    # 热键管理器（Win32 轮询 / pynput）
