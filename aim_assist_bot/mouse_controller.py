@@ -227,29 +227,47 @@ class MouseController:
         """
         import cv2
         import numpy as np
+        import os
 
         test_dx = self._cfg.calibrate_move_px
         settle = self._cfg.calibrate_settle_ms
         n_samples = 5
 
         print(f"[灵敏度校准] 开始...")
+        print(f"  截屏后端: {capture.backend_name}")
         print(f"  测试位移: {test_dx} mickey")
         print(f"  等待时间: {settle:.2f}s × {n_samples} 帧采样")
 
         # 刷掉截屏缓冲区的陈旧帧
-        for _ in range(3):
+        for _ in range(5):
             capture.grab()
-            time.sleep(0.02)
+            time.sleep(0.03)
 
         frame_a = capture.grab()
         h, w = frame_a.shape[:2]
+        print(f"  帧尺寸:   {w}×{h}")
+
+        # 诊断：保存帧 A
+        diag_dir = os.path.join(os.path.dirname(__file__), "diag")
+        os.makedirs(diag_dir, exist_ok=True)
+        cv2.imwrite(os.path.join(diag_dir, "calib_frame_a.png"), frame_a)
 
         # 取帧中心区域转为 float64 灰度（phaseCorrelate 要求）
         pad = 80
         roi = (slice(h // 4, h * 3 // 4), slice(pad, w - pad))
         gray_a = cv2.cvtColor(frame_a[roi], cv2.COLOR_BGR2GRAY).astype(np.float64)
 
-        # 应用汉宁窗减轻边缘效应
+        # 检查帧 A 是否全黑（说明截屏后端无法捕获游戏画面）
+        mean_brightness = np.mean(gray_a)
+        print(f"  帧A平均亮度: {mean_brightness:.1f} (全黑=0)")
+        if mean_brightness < 5:
+            print(f"[灵敏度校准] 帧 A 几乎全黑！截屏后端无法捕获游戏画面。")
+            print(f"  解决方案:")
+            print(f"    1. 安装 dxcam: pip install dxcam")
+            print(f"    2. 或将 Kovaak's 切换为「无边框窗口」模式")
+            print(f"  诊断图片已保存到 {diag_dir}/ 目录")
+            return self._cfg.sensitivity
+
         hann = cv2.createHanningWindow(
             (gray_a.shape[1], gray_a.shape[0]), cv2.CV_64F
         )
@@ -257,9 +275,10 @@ class MouseController:
         # 发送测试位移
         _move_relative(test_dx, 0)
 
-        # 多帧采样：等待渲染 → 截帧 → 相位相关 → 记录偏移
+        # 多帧采样
         best_shift = 0.0
         best_confidence = 0.0
+        best_frame_b = None
 
         for i in range(n_samples):
             time.sleep(settle)
@@ -269,26 +288,48 @@ class MouseController:
             (dx_detected, _dy), confidence = cv2.phaseCorrelate(
                 gray_a, gray_b, hann
             )
-            # phaseCorrelate 返回的 dx 是 B 相对于 A 的位移
-            # 鼠标右移 → 游戏场景左移 → dx_detected 为负值
             print(f"  帧#{i}: 偏移={dx_detected:+.1f}px, 置信度={confidence:.4f}")
 
-            if confidence > best_confidence:
+            if abs(dx_detected) > abs(best_shift):
                 best_confidence = confidence
                 best_shift = dx_detected
+                best_frame_b = frame_b
 
         # 恢复原位
         _move_relative(-test_dx, 0)
         time.sleep(settle)
 
+        # 诊断：保存帧 B 和差异图
+        if best_frame_b is not None:
+            cv2.imwrite(os.path.join(diag_dir, "calib_frame_b.png"), best_frame_b)
+            diff = cv2.absdiff(frame_a, best_frame_b)
+            cv2.imwrite(os.path.join(diag_dir, "calib_diff.png"), diff)
+
+        # 检查帧 A 和帧 B 是否完全相同
+        if best_frame_b is not None:
+            pixel_diff = np.mean(cv2.absdiff(frame_a, best_frame_b))
+            print(f"  帧A-B 平均像素差: {pixel_diff:.2f} (0=完全相同)")
+            if pixel_diff < 0.5:
+                print(f"[灵敏度校准] 截到的两帧几乎完全相同！")
+                print(f"  说明截屏后端未能捕获到游戏的实时画面。")
+                print(f"  解决方案:")
+                print(f"    1. 安装 dxcam: pip install dxcam")
+                print(f"    2. 或将 Kovaak's 切换为「无边框窗口」模式")
+                print(f"  诊断图片已保存到 {diag_dir}/ 目录，请查看:")
+                print(f"    calib_frame_a.png — 移动前截图")
+                print(f"    calib_frame_b.png — 移动后截图")
+                print(f"    calib_diff.png    — 两帧差异")
+                return self._cfg.sensitivity
+
         actual_px = abs(best_shift)
 
         if actual_px < 1.0:
             print(f"[灵敏度校准] 未检测到有效画面移动 (最大偏移={actual_px:.1f}px)")
+            print(f"  诊断图片已保存到 {diag_dir}/ 目录")
             print(f"  排查建议:")
-            print(f"    1. 确保在 Kovaak's 训练场景内（非主菜单）按 F6")
-            print(f"    2. 尝试增大测试位移: --calibrate-move 600")
-            print(f"    3. 场景中需有墙壁/地板等静态参照物")
+            print(f"    1. 安装 dxcam: pip install dxcam")
+            print(f"    2. 或将 Kovaak's 切换为「无边框窗口」模式")
+            print(f"    3. 确保在训练场景内（非主菜单）按 F6")
             return self._cfg.sensitivity
 
         new_sens = test_dx / actual_px

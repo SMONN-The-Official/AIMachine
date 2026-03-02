@@ -212,6 +212,7 @@ class AimBot:
         print(f"  移动模式:   {move_mode} (sensitivity={self.cfg.sensitivity})")
         print(f"  检测模式:   {mode_str}")
         print(f"  优先级策略: {self.cfg.priority}")
+        print(f"  截屏后端:   {self.capture.backend_name}")
         print(f"  截屏区域:   {self.cfg.capture_region}")
         print(f"  热键后端:   {self.hotkeys.backend_name}")
         print("=" * 60)
@@ -280,6 +281,8 @@ def main():
                         help="亮度差值阈值")
     parser.add_argument("--calibrate-move", type=int, default=400,
                         help="灵敏度校准测试位移量 mickey (默认 400)")
+    parser.add_argument("--force-mss", action="store_true",
+                        help="强制使用 mss 截屏（跳过 dxcam）")
 
     args = parser.parse_args()
 
@@ -296,6 +299,7 @@ def main():
     cfg.brightness_threshold = args.brightness_threshold
     cfg.brightness_diff_threshold = args.brightness_diff
     cfg.calibrate_move_px = args.calibrate_move
+    cfg.force_mss = args.force_mss
 
     if args.region:
         parts = [int(x) for x in args.region.split(",")]

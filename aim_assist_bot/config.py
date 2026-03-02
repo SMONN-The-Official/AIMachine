@@ -40,6 +40,7 @@ class BotConfig:
         "top": 0, "left": 0, "width": 1920, "height": 1080
     })
     monitor_index: int = 1  # mss 显示器编号，1 = 主显示器
+    force_mss: bool = False # True=强制用 mss，False=Windows 上优先 dxcam
 
     # ── 颜色检测 ──────────────────────────────────────────────────
     color_ranges: List[ColorRange] = field(default_factory=lambda: [
