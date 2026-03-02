@@ -247,9 +247,10 @@ def main():
   python main.py --no-game-mode                     # 桌面窗口模式
 
 灵敏度校准:
-  进入训练场景后按 F6 自动校准。程序会发一个测试位移，
-  通过模板匹配测量画面实际移动了多少像素，自动算出 sensitivity。
-  也可手动指定: --sensitivity 1.2""",
+  进入训练场景后按 F6 自动校准。程序会发送一个较大的测试位移，
+  通过相位相关分析测量画面实际移动了多少像素，自动算出 sensitivity。
+  也可手动指定: --sensitivity 1.2
+  如果校准失败，尝试加大测试位移: --calibrate-move 600""",
     )
     parser.add_argument("--preset",
                         choices=["kovaaks", "aimlab", "white", "all", "custom"],
@@ -277,6 +278,8 @@ def main():
                         help="亮度检测阈值 (0~255)")
     parser.add_argument("--brightness-diff", type=int, default=40,
                         help="亮度差值阈值")
+    parser.add_argument("--calibrate-move", type=int, default=400,
+                        help="灵敏度校准测试位移量 mickey (默认 400)")
 
     args = parser.parse_args()
 
@@ -292,6 +295,7 @@ def main():
     cfg.min_circularity = args.min_circularity
     cfg.brightness_threshold = args.brightness_threshold
     cfg.brightness_diff_threshold = args.brightness_diff
+    cfg.calibrate_move_px = args.calibrate_move
 
     if args.region:
         parts = [int(x) for x in args.region.split(",")]

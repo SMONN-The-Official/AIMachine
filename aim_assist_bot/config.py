@@ -74,8 +74,8 @@ class BotConfig:
     show_preview: bool = False      # 是否显示调试预览窗口
 
     # ── 灵敏度自动校准 ──────────────────────────────────────────
-    calibrate_move_px: int = 150    # 校准时发送的测试位移量（mickey）
-    calibrate_settle_ms: float = 0.08  # 发送位移后等待画面稳定的秒数
+    calibrate_move_px: int = 400    # 校准测试位移量（mickey），越大越精确
+    calibrate_settle_ms: float = 0.25  # 每帧采样间隔（秒），需足够让游戏渲染
 
     # ── 快捷键 ─────────────────────────────────────────────────
     toggle_key: str = "f2"          # 启停热键

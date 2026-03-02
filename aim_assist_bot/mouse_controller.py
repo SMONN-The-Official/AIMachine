@@ -211,87 +211,95 @@ class MouseController:
         """
         自动校准 sensitivity 倍率。
 
-        原理：
-          1. 截帧 A，记录所有目标的位置
-          2. 发送已知位移 SendInput(test_dx, 0)
-          3. 等待画面稳定，截帧 B
-          4. 通过帧 A 与帧 B 之间画面的整体偏移量，反算
-             实际 1 mickey 对应多少屏幕像素
-          5. sensitivity = test_dx / 实际屏幕偏移
+        流程：
+          1. 连续空截几帧刷掉截屏缓冲区的旧帧
+          2. 截帧 A（基准帧）
+          3. SendInput 发送大幅测试位移
+          4. 等待足够长时间让游戏渲染新画面
+          5. 连续截多帧，逐帧与帧 A 做相位相关分析
+          6. 取检测到的最大水平偏移作为实际位移
+          7. sensitivity = test_dx / actual_pixel_shift
+          8. 发反向位移恢复原位
 
-        使用模板匹配（cv2.matchTemplate）测量两帧之间的像素偏移，
-        比依赖目标检测更鲁棒——即使场景中没有可点击目标也能校准。
-
-        Parameters
-        ----------
-        capture : ScreenCapture 实例
-        detector : TargetDetector 实例（此校准不依赖它，保留接口兼容）
-
-        Returns
-        -------
-        校准后的 sensitivity 值，同时已写入 self._cfg.sensitivity
+        使用 cv2.phaseCorrelate（傅里叶相位相关）测量两帧间的
+        亚像素级精确位移。比模板匹配更鲁棒——即使 Kovaak's 的
+        大面积纯色背景也能正确测量。
         """
         import cv2
         import numpy as np
 
         test_dx = self._cfg.calibrate_move_px
         settle = self._cfg.calibrate_settle_ms
+        n_samples = 5
 
-        print(f"[灵敏度校准] 开始... 发送测试位移 {test_dx} mickey →")
+        print(f"[灵敏度校准] 开始...")
+        print(f"  测试位移: {test_dx} mickey")
+        print(f"  等待时间: {settle:.2f}s × {n_samples} 帧采样")
+
+        # 刷掉截屏缓冲区的陈旧帧
+        for _ in range(3):
+            capture.grab()
+            time.sleep(0.02)
 
         frame_a = capture.grab()
-
         h, w = frame_a.shape[:2]
-        margin = max(test_dx * 2, 200)
-        roi_y1, roi_y2 = h // 4, h * 3 // 4
-        roi_x1, roi_x2 = margin, w - margin
-        template = frame_a[roi_y1:roi_y2, roi_x1:roi_x2].copy()
 
+        # 取帧中心区域转为 float64 灰度（phaseCorrelate 要求）
+        pad = 80
+        roi = (slice(h // 4, h * 3 // 4), slice(pad, w - pad))
+        gray_a = cv2.cvtColor(frame_a[roi], cv2.COLOR_BGR2GRAY).astype(np.float64)
+
+        # 应用汉宁窗减轻边缘效应
+        hann = cv2.createHanningWindow(
+            (gray_a.shape[1], gray_a.shape[0]), cv2.CV_64F
+        )
+
+        # 发送测试位移
         _move_relative(test_dx, 0)
-        time.sleep(settle)
 
-        frame_b = capture.grab()
+        # 多帧采样：等待渲染 → 截帧 → 相位相关 → 记录偏移
+        best_shift = 0.0
+        best_confidence = 0.0
 
-        gray_b = cv2.cvtColor(frame_b, cv2.COLOR_BGR2GRAY)
-        gray_t = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+        for i in range(n_samples):
+            time.sleep(settle)
+            frame_b = capture.grab()
+            gray_b = cv2.cvtColor(frame_b[roi], cv2.COLOR_BGR2GRAY).astype(np.float64)
 
-        result = cv2.matchTemplate(gray_b, gray_t, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, max_loc = cv2.minMaxLoc(result)
+            (dx_detected, _dy), confidence = cv2.phaseCorrelate(
+                gray_a, gray_b, hann
+            )
+            # phaseCorrelate 返回的 dx 是 B 相对于 A 的位移
+            # 鼠标右移 → 游戏场景左移 → dx_detected 为负值
+            print(f"  帧#{i}: 偏移={dx_detected:+.1f}px, 置信度={confidence:.4f}")
 
-        if max_val < 0.5:
-            print(f"[灵敏度校准] 模板匹配置信度过低 ({max_val:.2f})，校准失败")
-            print(f"             请确保游戏画面中有静态参照物（墙壁、地板等）")
-            # 发回去恢复原位
-            _move_relative(-test_dx, 0)
-            return self._cfg.sensitivity
+            if confidence > best_confidence:
+                best_confidence = confidence
+                best_shift = dx_detected
 
-        actual_shift = max_loc[0] - roi_x1
-        # actual_shift 是模板在帧 B 中相对于帧 A 中原位置的偏移（像素）
-
-        # 发回去恢复原位
+        # 恢复原位
         _move_relative(-test_dx, 0)
         time.sleep(settle)
 
-        if abs(actual_shift) < 2:
-            print(f"[灵敏度校准] 未检测到画面移动 (shift={actual_shift}px)")
-            print(f"             可能原因：游戏未使用 Raw Input，或 SendInput 被拦截")
+        actual_px = abs(best_shift)
+
+        if actual_px < 1.0:
+            print(f"[灵敏度校准] 未检测到有效画面移动 (最大偏移={actual_px:.1f}px)")
+            print(f"  排查建议:")
+            print(f"    1. 确保在 Kovaak's 训练场景内（非主菜单）按 F6")
+            print(f"    2. 尝试增大测试位移: --calibrate-move 600")
+            print(f"    3. 场景中需有墙壁/地板等静态参照物")
             return self._cfg.sensitivity
 
-        # sensitivity = 需要发送多少 mickey 才能移动 1 屏幕像素
-        # 我们发了 test_dx mickey，画面移了 actual_shift 像素
-        # 要让 "检测到 N 像素偏移 → 发 N×sens mickey → 准心刚好移 N 像素"
-        # 即 N × sens / test_dx × actual_shift = N
-        # → sens = test_dx / actual_shift
-        new_sens = test_dx / abs(actual_shift)
-
+        new_sens = test_dx / actual_px
         self._cfg.sensitivity = new_sens
 
         print(f"[灵敏度校准] 完成!")
-        print(f"  发送:     {test_dx} mickey")
-        print(f"  画面移动: {abs(actual_shift)} 像素")
-        print(f"  匹配度:   {max_val:.3f}")
+        print(f"  发送:       {test_dx} mickey")
+        print(f"  画面偏移:   {actual_px:.1f} 像素")
+        print(f"  置信度:     {best_confidence:.4f}")
         print(f"  sensitivity = {new_sens:.4f}")
-        print(f"  (即 1 屏幕像素 = {new_sens:.2f} mickey)")
+        print(f"  (即 1 屏幕像素 ≈ {new_sens:.2f} mickey)")
 
         return new_sens
 
