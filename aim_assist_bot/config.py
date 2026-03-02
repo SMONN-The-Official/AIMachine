@@ -27,6 +27,8 @@ RED_TARGET_HIGH = ColorRange("red_high", (160, 130, 130), (180, 255, 255))
 YELLOW_TARGET = ColorRange("yellow", (20, 100, 100), (35, 255, 255))
 # 粉紫色目标
 PINK_TARGET = ColorRange("pink", (140, 80, 100), (170, 255, 255))
+# 白色目标（低饱和度高亮度）—— 仅作为辅助，建议配合亮度检测使用
+WHITE_TARGET = ColorRange("white", (0, 0, 200), (180, 50, 255))
 
 
 @dataclass
@@ -43,6 +45,12 @@ class BotConfig:
     color_ranges: List[ColorRange] = field(default_factory=lambda: [
         KOVAAKS_ORANGE,
     ])
+
+    # ── 亮度差异检测（白色 / 高亮目标）────────────────────────────
+    enable_brightness_detect: bool = False
+    brightness_threshold: int = 220       # 绝对亮度阈值（0~255）
+    brightness_diff_threshold: int = 40   # 与局部背景的亮度差阈值
+    brightness_bg_kernel: int = 51        # 局部背景模糊核大小（越大越平滑）
 
     # ── 目标筛选 ──────────────────────────────────────────────────
     min_target_area: int = 30       # 最小轮廓面积（像素²），过滤噪点
