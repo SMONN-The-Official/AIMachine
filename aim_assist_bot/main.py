@@ -15,6 +15,7 @@ Aim Trainer 自动瞄准助手 —— 主程序入口。
   F3  切换调试预览窗口
   F4  退出
   F5  颜色取样校准
+  F6  灵敏度自动校准（进入训练场景后按）
 """
 
 import sys
@@ -65,6 +66,16 @@ class AimBot:
         print("[Bot] 正在退出...")
         self._active = False
         self._alive = False
+
+    # ── 灵敏度自动校准 ─────────────────────────────────────────
+    def _calibrate_sensitivity(self):
+        if not self.cfg.game_mode:
+            print("[灵敏度校准] 仅游戏模式需要校准，当前为桌面模式")
+            return
+        was_active = self._active
+        self._active = False
+        self.mouse.calibrate_sensitivity(self.capture, self.detector)
+        self._active = was_active
 
     # ── 颜色取样校准 ───────────────────────────────────────────
     def _calibrate_color(self):
@@ -121,6 +132,7 @@ class AimBot:
         self.hotkeys.register(self.cfg.exit_key, self._quit)
         self.hotkeys.register(self.cfg.preview_key, self._toggle_preview)
         self.hotkeys.register(self.cfg.calibrate_key, self._calibrate_color)
+        self.hotkeys.register(self.cfg.sens_calibrate_key, self._calibrate_sensitivity)
         self.hotkeys.start()
 
         self._alive = True
@@ -194,6 +206,7 @@ class AimBot:
         print(f"  [{self.cfg.toggle_key.upper()}]  启动 / 暂停")
         print(f"  [{self.cfg.preview_key.upper()}]  切换调试预览")
         print(f"  [{self.cfg.calibrate_key.upper()}]  颜色取样校准")
+        print(f"  [{self.cfg.sens_calibrate_key.upper()}]  灵敏度自动校准")
         print(f"  [{self.cfg.exit_key.upper()}]  退出")
         print("-" * 60)
         print(f"  移动模式:   {move_mode} (sensitivity={self.cfg.sensitivity})")
@@ -231,9 +244,12 @@ def main():
   python main.py --preset kovaaks                   # Kovaak's 橙红目标
   python main.py --preset white                     # 白色目标
   python main.py --preset all --preview             # 全部颜色 + 预览
-  python main.py --sensitivity 0.8                  # 准心移过头→调小
-  python main.py --sensitivity 1.5                  # 准心移不够→调大
-  python main.py --no-game-mode                     # 桌面窗口模式""",
+  python main.py --no-game-mode                     # 桌面窗口模式
+
+灵敏度校准:
+  进入训练场景后按 F6 自动校准。程序会发一个测试位移，
+  通过模板匹配测量画面实际移动了多少像素，自动算出 sensitivity。
+  也可手动指定: --sensitivity 1.2""",
     )
     parser.add_argument("--preset",
                         choices=["kovaaks", "aimlab", "white", "all", "custom"],

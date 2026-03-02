@@ -73,8 +73,13 @@ class BotConfig:
     loop_delay: float = 0.001       # 主循环间隔秒数
     show_preview: bool = False      # 是否显示调试预览窗口
 
+    # ── 灵敏度自动校准 ──────────────────────────────────────────
+    calibrate_move_px: int = 150    # 校准时发送的测试位移量（mickey）
+    calibrate_settle_ms: float = 0.08  # 发送位移后等待画面稳定的秒数
+
     # ── 快捷键 ─────────────────────────────────────────────────
     toggle_key: str = "f2"          # 启停热键
     exit_key: str = "f4"            # 退出热键
     preview_key: str = "f3"         # 切换预览窗口热键
     calibrate_key: str = "f5"       # 颜色取样校准热键
+    sens_calibrate_key: str = "f6"  # 灵敏度自动校准热键

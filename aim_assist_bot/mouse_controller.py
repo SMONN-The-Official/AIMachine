@@ -206,6 +206,95 @@ class MouseController:
             iy = int(src_y + (dst_y - src_y) * t)
             _set_cursor_pos(ix, iy)
 
+    # ── 灵敏度自动校准 ──────────────────────────────────────────
+    def calibrate_sensitivity(self, capture, detector) -> float:
+        """
+        自动校准 sensitivity 倍率。
+
+        原理：
+          1. 截帧 A，记录所有目标的位置
+          2. 发送已知位移 SendInput(test_dx, 0)
+          3. 等待画面稳定，截帧 B
+          4. 通过帧 A 与帧 B 之间画面的整体偏移量，反算
+             实际 1 mickey 对应多少屏幕像素
+          5. sensitivity = test_dx / 实际屏幕偏移
+
+        使用模板匹配（cv2.matchTemplate）测量两帧之间的像素偏移，
+        比依赖目标检测更鲁棒——即使场景中没有可点击目标也能校准。
+
+        Parameters
+        ----------
+        capture : ScreenCapture 实例
+        detector : TargetDetector 实例（此校准不依赖它，保留接口兼容）
+
+        Returns
+        -------
+        校准后的 sensitivity 值，同时已写入 self._cfg.sensitivity
+        """
+        import cv2
+        import numpy as np
+
+        test_dx = self._cfg.calibrate_move_px
+        settle = self._cfg.calibrate_settle_ms
+
+        print(f"[灵敏度校准] 开始... 发送测试位移 {test_dx} mickey →")
+
+        frame_a = capture.grab()
+
+        h, w = frame_a.shape[:2]
+        margin = max(test_dx * 2, 200)
+        roi_y1, roi_y2 = h // 4, h * 3 // 4
+        roi_x1, roi_x2 = margin, w - margin
+        template = frame_a[roi_y1:roi_y2, roi_x1:roi_x2].copy()
+
+        _move_relative(test_dx, 0)
+        time.sleep(settle)
+
+        frame_b = capture.grab()
+
+        gray_b = cv2.cvtColor(frame_b, cv2.COLOR_BGR2GRAY)
+        gray_t = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+
+        result = cv2.matchTemplate(gray_b, gray_t, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, max_loc = cv2.minMaxLoc(result)
+
+        if max_val < 0.5:
+            print(f"[灵敏度校准] 模板匹配置信度过低 ({max_val:.2f})，校准失败")
+            print(f"             请确保游戏画面中有静态参照物（墙壁、地板等）")
+            # 发回去恢复原位
+            _move_relative(-test_dx, 0)
+            return self._cfg.sensitivity
+
+        actual_shift = max_loc[0] - roi_x1
+        # actual_shift 是模板在帧 B 中相对于帧 A 中原位置的偏移（像素）
+
+        # 发回去恢复原位
+        _move_relative(-test_dx, 0)
+        time.sleep(settle)
+
+        if abs(actual_shift) < 2:
+            print(f"[灵敏度校准] 未检测到画面移动 (shift={actual_shift}px)")
+            print(f"             可能原因：游戏未使用 Raw Input，或 SendInput 被拦截")
+            return self._cfg.sensitivity
+
+        # sensitivity = 需要发送多少 mickey 才能移动 1 屏幕像素
+        # 我们发了 test_dx mickey，画面移了 actual_shift 像素
+        # 要让 "检测到 N 像素偏移 → 发 N×sens mickey → 准心刚好移 N 像素"
+        # 即 N × sens / test_dx × actual_shift = N
+        # → sens = test_dx / actual_shift
+        new_sens = test_dx / abs(actual_shift)
+
+        self._cfg.sensitivity = new_sens
+
+        print(f"[灵敏度校准] 完成!")
+        print(f"  发送:     {test_dx} mickey")
+        print(f"  画面移动: {abs(actual_shift)} 像素")
+        print(f"  匹配度:   {max_val:.3f}")
+        print(f"  sensitivity = {new_sens:.4f}")
+        print(f"  (即 1 屏幕像素 = {new_sens:.2f} mickey)")
+
+        return new_sens
+
     @staticmethod
     def frame_to_screen(fx: int, fy: int,
                         offset_x: int, offset_y: int) -> Tuple[int, int]:
