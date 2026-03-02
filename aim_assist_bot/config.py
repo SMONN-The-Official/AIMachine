@@ -59,11 +59,12 @@ class BotConfig:
     morph_kernel_size: int = 3      # 形态学操作核大小
 
     # ── 鼠标控制 ──────────────────────────────────────────────────
-    mouse_speed: float = 1.0        # 移动速度倍率（越大越快）
+    game_mode: bool = True          # True=SendInput 相对位移（游戏），False=绝对坐标（桌面）
+    sensitivity: float = 1.0        # 灵敏度倍率：发送的像素偏移 = 检测偏移 × sensitivity
+                                    # 若准心移过头→调小，移不够→调大
     click_delay: float = 0.01       # 点击后等待秒数
-    use_smooth_move: bool = True    # 是否使用平滑移动
-    smooth_steps: int = 3           # 平滑移动插值步数
-    move_duration: float = 0.0      # pyautogui moveTo duration（秒）
+    use_smooth_move: bool = False   # 是否分步发送位移（平滑移动）
+    smooth_steps: int = 3           # 平滑移动步数
 
     # ── 优先级策略 ──────────────────────────────────────────────
     priority: str = "nearest"       # nearest / largest / center

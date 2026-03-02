@@ -2,11 +2,13 @@
 """
 Aim Trainer 自动瞄准助手 —— 主程序入口。
 
-功能：
-  - 实时捕获屏幕画面
-  - 通过颜色 + 亮度双模式检测识别训练目标（含白色小球）
-  - 自动移动光标至目标中心并点击
-  - 循环锁定下一目标直至训练结束
+核心移动逻辑（游戏模式）：
+  1. 截屏后检测目标在帧中的位置 (tx, ty)
+  2. 准心固定在帧中心 (cx, cy) = (frame_w/2, frame_h/2)
+  3. 偏移量 dx = tx - cx, dy = ty - cy
+  4. 通过 SendInput 发送 (dx × sensitivity, dy × sensitivity) 相对位移
+  5. 游戏的 Raw Input 接收到位移后移动准心
+  6. 点击 → 循环
 
 快捷键（默认）：
   F2  启动 / 暂停
@@ -67,18 +69,23 @@ class AimBot:
     # ── 颜色取样校准 ───────────────────────────────────────────
     def _calibrate_color(self):
         frame = self.capture.grab()
-        mx, my = self.mouse.get_position()
-        ox, oy = self.capture.offset
-        fx, fy = mx - ox, my - oy
-
         h, w = frame.shape[:2]
+
+        # 游戏模式下准心就在帧中心，取帧中心附近像素
+        if self.cfg.game_mode:
+            fx, fy = w // 2, h // 2
+        else:
+            mx, my = self.mouse.get_position()
+            ox, oy = self.capture.offset
+            fx, fy = mx - ox, my - oy
+
         r = 10
         x1, y1 = max(0, fx - r), max(0, fy - r)
         x2, y2 = min(w, fx + r), min(h, fy + r)
 
         roi = frame[y1:y2, x1:x2]
         if roi.size == 0:
-            print("[校准] 取样区域无效，请将光标移到目标上再按 F5")
+            print("[校准] 取样区域无效")
             return
 
         hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
@@ -97,18 +104,16 @@ class AimBot:
         print(f"[校准] 采样 HSV 均值: H={mean_h} S={mean_s} V={mean_v}")
         print(f"[校准] 建议范围: lower={lower}, upper={upper}")
 
-        # 低饱和度样本（白色/灰色）自动启用亮度检测
         if mean_s < 60 and mean_v > 180:
             self.cfg.enable_brightness_detect = True
             self.cfg.brightness_threshold = max(160, mean_v - 50)
             self.cfg.color_ranges = []
-            print(f"[校准] 检测到低饱和度高亮目标，已切换为亮度检测模式")
-            print(f"       亮度阈值={self.cfg.brightness_threshold}, "
-                  f"差值阈值={self.cfg.brightness_diff_threshold}")
+            print(f"[校准] 低饱和度高亮目标 → 亮度检测模式 "
+                  f"(阈值={self.cfg.brightness_threshold})")
         else:
             new_range = ColorRange("calibrated", lower, upper)
             self.cfg.color_ranges = [new_range]
-            print("[校准] 已临时应用新 HSV 颜色范围（重启后失效）")
+            print("[校准] 已临时应用新 HSV 颜色范围")
 
     # ── 主循环 ──────────────────────────────────────────────────
     def run(self):
@@ -123,7 +128,6 @@ class AimBot:
 
         try:
             while self._alive:
-                # 每帧都轮询热键（Win32 模式依赖此调用）
                 self.hotkeys.poll()
 
                 if not self._active:
@@ -135,15 +139,27 @@ class AimBot:
 
                 if targets:
                     best = targets[0]
-                    sx, sy = MouseController.frame_to_screen(
-                        best.cx, best.cy, *self.capture.offset
-                    )
-                    self.mouse.move_and_click(sx, sy)
+
+                    if self.cfg.game_mode:
+                        # 游戏模式：准心在帧中心，计算偏移量，发送相对位移
+                        frame_h, frame_w = frame.shape[:2]
+                        dx = best.cx - frame_w // 2
+                        dy = best.cy - frame_h // 2
+                        self.mouse.move_relative_and_click(dx, dy)
+                    else:
+                        # 桌面模式：移动到绝对屏幕坐标
+                        sx, sy = MouseController.frame_to_screen(
+                            best.cx, best.cy, *self.capture.offset
+                        )
+                        self.mouse.move_and_click(sx, sy)
+
                     self._stats_hits += 1
 
                 if self._show_preview:
                     vis = self.detector.draw_debug(frame, targets)
-                    info = f"Targets: {len(targets)} | Hits: {self._stats_hits}"
+                    mode_tag = "GAME" if self.cfg.game_mode else "DESKTOP"
+                    info = (f"[{mode_tag}] Targets: {len(targets)} "
+                            f"| Hits: {self._stats_hits}")
                     if self._stats_start > 0:
                         elapsed = time.time() - self._stats_start
                         hps = self._stats_hits / max(elapsed, 0.001)
@@ -165,10 +181,12 @@ class AimBot:
     def _print_banner(self):
         detect_mode = []
         if self.cfg.color_ranges:
-            detect_mode.append(f"HSV颜色({', '.join(c.name for c in self.cfg.color_ranges)})")
+            detect_mode.append(f"HSV({', '.join(c.name for c in self.cfg.color_ranges)})")
         if self.cfg.enable_brightness_detect:
-            detect_mode.append(f"亮度差异(阈值={self.cfg.brightness_threshold})")
+            detect_mode.append(f"亮度(阈值={self.cfg.brightness_threshold})")
         mode_str = " + ".join(detect_mode) or "无"
+
+        move_mode = "SendInput 相对位移" if self.cfg.game_mode else "绝对坐标"
 
         print("=" * 60)
         print("  Aim Trainer 自动瞄准助手")
@@ -178,6 +196,7 @@ class AimBot:
         print(f"  [{self.cfg.calibrate_key.upper()}]  颜色取样校准")
         print(f"  [{self.cfg.exit_key.upper()}]  退出")
         print("-" * 60)
+        print(f"  移动模式:   {move_mode} (sensitivity={self.cfg.sensitivity})")
         print(f"  检测模式:   {mode_str}")
         print(f"  优先级策略: {self.cfg.priority}")
         print(f"  截屏区域:   {self.cfg.capture_region}")
@@ -208,12 +227,13 @@ def main():
         description="Aim Trainer 自动瞄准助手",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
-颜色预设说明:
-  kovaaks  - Kovaak's 默认橙红色目标
-  aimlab   - Aim Lab 默认蓝色目标
-  white    - 白色/高亮目标（亮度差异检测）
-  all      - 同时启用所有颜色 + 亮度检测
-  custom   - 使用 config.py 中的默认设置""",
+使用示例:
+  python main.py --preset kovaaks                   # Kovaak's 橙红目标
+  python main.py --preset white                     # 白色目标
+  python main.py --preset all --preview             # 全部颜色 + 预览
+  python main.py --sensitivity 0.8                  # 准心移过头→调小
+  python main.py --sensitivity 1.5                  # 准心移不够→调大
+  python main.py --no-game-mode                     # 桌面窗口模式""",
     )
     parser.add_argument("--preset",
                         choices=["kovaaks", "aimlab", "white", "all", "custom"],
@@ -223,10 +243,12 @@ def main():
                         default="nearest", help="目标优先级策略")
     parser.add_argument("--preview", action="store_true",
                         help="启动时打开调试预览窗口")
-    parser.add_argument("--speed", type=float, default=1.0,
-                        help="鼠标速度倍率")
-    parser.add_argument("--smooth-steps", type=int, default=3,
-                        help="平滑移动步数 (1=瞬移)")
+    parser.add_argument("--sensitivity", type=float, default=1.0,
+                        help="灵敏度倍率：准心移过头→调小，移不够→调大 (默认 1.0)")
+    parser.add_argument("--no-game-mode", action="store_true",
+                        help="禁用游戏模式，使用绝对坐标移动（适用于桌面窗口）")
+    parser.add_argument("--smooth-steps", type=int, default=1,
+                        help="平滑移动步数 (1=瞬移，默认 1)")
     parser.add_argument("--min-area", type=int, default=30,
                         help="最小目标面积阈值")
     parser.add_argument("--max-area", type=int, default=80000,
@@ -236,17 +258,19 @@ def main():
     parser.add_argument("--region", type=str, default=None,
                         help="截屏区域: left,top,width,height")
     parser.add_argument("--brightness-threshold", type=int, default=220,
-                        help="亮度检测阈值 (0~255，默认 220)")
+                        help="亮度检测阈值 (0~255)")
     parser.add_argument("--brightness-diff", type=int, default=40,
-                        help="亮度差值阈值 (默认 40)")
+                        help="亮度差值阈值")
 
     args = parser.parse_args()
 
     cfg = BotConfig()
+    cfg.game_mode = not args.no_game_mode
+    cfg.sensitivity = args.sensitivity
     cfg.priority = args.priority
     cfg.show_preview = args.preview
-    cfg.mouse_speed = args.speed
     cfg.smooth_steps = args.smooth_steps
+    cfg.use_smooth_move = args.smooth_steps > 1
     cfg.min_target_area = args.min_area
     cfg.max_target_area = args.max_area
     cfg.min_circularity = args.min_circularity
@@ -278,7 +302,6 @@ def main():
                             RED_TARGET_LOW, RED_TARGET_HIGH,
                             YELLOW_TARGET, WHITE_TARGET]
         cfg.enable_brightness_detect = True
-    # "custom" 使用 BotConfig 默认值
 
     bot = AimBot(cfg)
     bot.run()
