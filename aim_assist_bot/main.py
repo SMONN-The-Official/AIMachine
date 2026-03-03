@@ -166,7 +166,9 @@ class AimBot:
                         on_target = abs(dx) <= dz and abs(dy) <= dz
 
                         if on_target:
-                            # 准心已在目标上 → 直接点击
+                            # 准心在死区内 → 精确修正残余偏移后点击
+                            if dx != 0 or dy != 0:
+                                self.mouse.move_relative(dx, dy)
                             self.mouse.click()
                             self._stats_hits += 1
                             if self.cfg.post_click_cooldown > 0:
