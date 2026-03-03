@@ -162,19 +162,28 @@ class AimBot:
                         if cap > 0 and (abs(dx) > cap or abs(dy) > cap):
                             continue
 
-                        self.mouse.move_relative_and_click(dx, dy)
+                        dz = self.cfg.dead_zone
+                        on_target = abs(dx) <= dz and abs(dy) <= dz
+
+                        if on_target:
+                            # 准心已在目标上 → 直接点击
+                            self.mouse.click()
+                            self._stats_hits += 1
+                            if self.cfg.post_click_cooldown > 0:
+                                time.sleep(self.cfg.post_click_cooldown)
+                        else:
+                            # 准心不在目标上 → 只移动，不点击
+                            self.mouse.move_relative(dx, dy)
+
                     else:
                         sx, sy = MouseController.frame_to_screen(
                             best.cx, best.cy, *self.capture.offset
                         )
-                        self.mouse.move_and_click(sx, sy)
-
-                    self._stats_hits += 1
-
-                    # 点击后冷却：等目标消失动画播完再截下一帧，
-                    # 避免重复检测同一个目标导致准心累积漂移
-                    if self.cfg.post_click_cooldown > 0:
-                        time.sleep(self.cfg.post_click_cooldown)
+                        self.mouse.move_to(sx, sy)
+                        self.mouse.click()
+                        self._stats_hits += 1
+                        if self.cfg.post_click_cooldown > 0:
+                            time.sleep(self.cfg.post_click_cooldown)
 
                 if self._show_preview:
                     vis = self.detector.draw_debug(frame, targets)
@@ -274,8 +283,10 @@ def main():
                         help="灵敏度倍率：准心移过头→调小，移不够→调大 (默认 1.0)")
     parser.add_argument("--no-game-mode", action="store_true",
                         help="禁用游戏模式，使用绝对坐标移动（适用于桌面窗口）")
-    parser.add_argument("--smooth-steps", type=int, default=1,
-                        help="平滑移动步数 (1=瞬移，默认 1)")
+    parser.add_argument("--dead-zone", type=int, default=5,
+                        help="死区半径像素，准心在此范围内视为到位→点击 (默认 5)")
+    parser.add_argument("--max-move", type=int, default=500,
+                        help="单帧最大移动像素，超过视为误检丢弃 (默认 500)")
     parser.add_argument("--min-area", type=int, default=30,
                         help="最小目标面积阈值")
     parser.add_argument("--max-area", type=int, default=80000,
@@ -300,8 +311,8 @@ def main():
     cfg.sensitivity = args.sensitivity
     cfg.priority = args.priority
     cfg.show_preview = args.preview
-    cfg.smooth_steps = args.smooth_steps
-    cfg.use_smooth_move = args.smooth_steps > 1
+    cfg.dead_zone = args.dead_zone
+    cfg.max_move_px = args.max_move
     cfg.min_target_area = args.min_area
     cfg.max_target_area = args.max_area
     cfg.min_circularity = args.min_circularity

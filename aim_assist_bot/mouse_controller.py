@@ -143,101 +143,33 @@ class MouseController:
     def __init__(self, cfg: BotConfig):
         self._cfg = cfg
 
-    # ── 游戏模式：相对位移 ──────────────────────────────────────
-    def move_relative(self, dx: int, dy: int) -> bool:
+    # ── 游戏模式：相对位移（仅移动，不点击）──────────────────────
+    def move_relative(self, dx: int, dy: int):
         """
-        发送相对鼠标位移。
-
-        返回 True 表示发送了移动，False 表示在死区内未移动。
-        dx, dy 是屏幕像素偏移量（目标 - 准心）。
+        发送相对鼠标位移。一次 SendInput 调用瞬间完成。
+        dx, dy 是屏幕像素偏移量（目标 - 准心），内部乘以 sensitivity。
         """
-        # 死区：目标已足够接近准心，不再移动
-        if abs(dx) <= self._cfg.dead_zone and abs(dy) <= self._cfg.dead_zone:
-            return False
-
-        # 最大偏移量限制：防止误检导致准心飞出屏幕
-        cap = self._cfg.max_move_px
-        if cap > 0:
-            dx = max(-cap, min(cap, dx))
-            dy = max(-cap, min(cap, dy))
-
         s = self._cfg.sensitivity
         real_dx = int(round(dx * s))
         real_dy = int(round(dy * s))
+        _move_relative(real_dx, real_dy)
 
-        if self._cfg.use_smooth_move and self._cfg.smooth_steps > 1:
-            self._smooth_move_relative(real_dx, real_dy)
-        else:
-            _move_relative(real_dx, real_dy)
-
-        return True
-
+    # ── 点击（仅点击，不移动）──────────────────────────────────
     def click(self):
         """
         执行一次完整的左键点击。
-        down 和 up 分开发送，中间保持按住状态一段时间，
-        确保游戏能识别为有效点击。
+        down 和 up 分开发送，中间保持按住确保游戏识别。
         """
         _mouse_down()
         time.sleep(self._cfg.click_hold_time)
         _mouse_up()
 
-    def move_relative_and_click(self, dx: int, dy: int) -> bool:
-        """
-        移动到目标并点击（游戏模式主调用）。
-
-        返回 True 表示执行了移动+点击，False 表示目标在死区内（仅点击）。
-        """
-        moved = self.move_relative(dx, dy)
-
-        # 移动后等一小段时间让游戏处理完位移再点击
-        if moved:
-            time.sleep(self._cfg.move_click_gap)
-
-        self.click()
-        return moved
-
-    # ── 桌面模式：绝对坐标 ──────────────────────────────────────
+    # ── 桌面模式：绝对坐标（仅移动，不点击）────────────────────
     def move_to(self, x: int, y: int):
-        if self._cfg.use_smooth_move and self._cfg.smooth_steps > 1:
-            self._smooth_move_absolute(x, y)
-        else:
-            _set_cursor_pos(x, y)
-
-    def move_and_click(self, x: int, y: int):
-        self.move_to(x, y)
-        time.sleep(self._cfg.move_click_gap)
-        self.click()
+        _set_cursor_pos(x, y)
 
     def get_position(self) -> Tuple[int, int]:
         return _get_cursor_pos()
-
-    # ── 平滑移动 ────────────────────────────────────────────────
-    def _smooth_move_relative(self, total_dx: int, total_dy: int):
-        """将总偏移分成 N 步逐步发送。"""
-        steps = self._cfg.smooth_steps
-        remainder_x, remainder_y = 0.0, 0.0
-        for i in range(1, steps + 1):
-            target_x = total_dx * i / steps
-            target_y = total_dy * i / steps
-            prev_x = total_dx * (i - 1) / steps
-            prev_y = total_dy * (i - 1) / steps
-            step_dx = target_x - prev_x + remainder_x
-            step_dy = target_y - prev_y + remainder_y
-            int_dx = int(round(step_dx))
-            int_dy = int(round(step_dy))
-            remainder_x = step_dx - int_dx
-            remainder_y = step_dy - int_dy
-            _move_relative(int_dx, int_dy)
-
-    def _smooth_move_absolute(self, dst_x: int, dst_y: int):
-        src_x, src_y = _get_cursor_pos()
-        steps = self._cfg.smooth_steps
-        for i in range(1, steps + 1):
-            t = i / steps
-            ix = int(src_x + (dst_x - src_x) * t)
-            iy = int(src_y + (dst_y - src_y) * t)
-            _set_cursor_pos(ix, iy)
 
     # ── 灵敏度自动校准 ──────────────────────────────────────────
     def calibrate_sensitivity(self, capture, detector) -> float:

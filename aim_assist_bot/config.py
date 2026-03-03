@@ -65,10 +65,8 @@ class BotConfig:
     click_hold_time: float = 0.03   # 鼠标左键按住时长（秒），太短游戏不认
     move_click_gap: float = 0.01    # 移动完成到点击之间的间隔（秒）
     post_click_cooldown: float = 0.06  # 点击后冷却（秒），等目标消失再截下一帧
-    dead_zone: int = 3              # 死区半径（像素），目标在此范围内不移动直接点击
+    dead_zone: int = 5              # 死区半径（像素），目标在此范围内视为准心已到位→点击
     max_move_px: int = 500          # 单帧最大移动量（像素），超过视为误检直接丢弃
-    use_smooth_move: bool = False   # 是否分步发送位移（平滑移动）
-    smooth_steps: int = 3           # 平滑移动步数
 
     # ── 优先级策略 ──────────────────────────────────────────────
     priority: str = "nearest"       # nearest / largest / center
