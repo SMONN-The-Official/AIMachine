@@ -139,6 +139,8 @@ class AimBot:
         self._print_banner()
 
         try:
+            prev_frame_hash = 0
+
             while self._alive:
                 self.hotkeys.poll()
 
@@ -147,6 +149,14 @@ class AimBot:
                     continue
 
                 frame = self.capture.grab()
+
+                # 帧去重：跳过和上一帧相同的旧帧，避免对旧帧重复处理
+                frame_hash = hash(frame[::8, ::8, 0].tobytes())
+                if frame_hash == prev_frame_hash:
+                    time.sleep(0.002)
+                    continue
+                prev_frame_hash = frame_hash
+
                 targets = self.detector.detect(frame)
 
                 if targets:
@@ -157,7 +167,6 @@ class AimBot:
                         dx = best.cx - frame_w // 2
                         dy = best.cy - frame_h // 2
 
-                        # 偏移量超过上限视为误检，跳过本帧
                         cap = self.cfg.max_move_px
                         if cap > 0 and (abs(dx) > cap or abs(dy) > cap):
                             continue
@@ -166,16 +175,18 @@ class AimBot:
                         on_target = abs(dx) <= dz and abs(dy) <= dz
 
                         if on_target:
-                            # 准心在死区内 → 精确修正残余偏移后点击
                             if dx != 0 or dy != 0:
                                 self.mouse.move_relative(dx, dy)
                             self.mouse.click()
                             self._stats_hits += 1
                             if self.cfg.post_click_cooldown > 0:
                                 time.sleep(self.cfg.post_click_cooldown)
+                            prev_frame_hash = 0
                         else:
-                            # 准心不在目标上 → 只移动，不点击
                             self.mouse.move_relative(dx, dy)
+                            # 等待游戏渲染出反映移动结果的新帧
+                            time.sleep(self.cfg.post_move_settle)
+                            prev_frame_hash = 0
 
                     else:
                         sx, sy = MouseController.frame_to_screen(
@@ -186,6 +197,7 @@ class AimBot:
                         self._stats_hits += 1
                         if self.cfg.post_click_cooldown > 0:
                             time.sleep(self.cfg.post_click_cooldown)
+                        prev_frame_hash = 0
 
                 if self._show_preview:
                     vis = self.detector.draw_debug(frame, targets)
