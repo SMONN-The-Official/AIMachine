@@ -139,8 +139,6 @@ class AimBot:
         self._print_banner()
 
         try:
-            prev_frame_hash = 0
-
             while self._alive:
                 self.hotkeys.poll()
 
@@ -149,14 +147,6 @@ class AimBot:
                     continue
 
                 frame = self.capture.grab()
-
-                # 帧去重：跳过和上一帧相同的旧帧，避免对旧帧重复处理
-                frame_hash = hash(frame[::8, ::8, 0].tobytes())
-                if frame_hash == prev_frame_hash:
-                    time.sleep(0.002)
-                    continue
-                prev_frame_hash = frame_hash
-
                 targets = self.detector.detect(frame)
 
                 if targets:
@@ -167,6 +157,7 @@ class AimBot:
                         dx = best.cx - frame_w // 2
                         dy = best.cy - frame_h // 2
 
+                        # 偏移量超过上限视为误检，跳过本帧
                         cap = self.cfg.max_move_px
                         if cap > 0 and (abs(dx) > cap or abs(dy) > cap):
                             continue
@@ -175,18 +166,16 @@ class AimBot:
                         on_target = abs(dx) <= dz and abs(dy) <= dz
 
                         if on_target:
+                            # 准心在死区内 → 精确修正残余偏移后点击
                             if dx != 0 or dy != 0:
                                 self.mouse.move_relative(dx, dy)
                             self.mouse.click()
                             self._stats_hits += 1
                             if self.cfg.post_click_cooldown > 0:
                                 time.sleep(self.cfg.post_click_cooldown)
-                            prev_frame_hash = 0
                         else:
+                            # 准心不在目标上 → 只移动，不点击
                             self.mouse.move_relative(dx, dy)
-                            # 等待游戏渲染出反映移动结果的新帧
-                            time.sleep(self.cfg.post_move_settle)
-                            prev_frame_hash = 0
 
                     else:
                         sx, sy = MouseController.frame_to_screen(
@@ -197,7 +186,6 @@ class AimBot:
                         self._stats_hits += 1
                         if self.cfg.post_click_cooldown > 0:
                             time.sleep(self.cfg.post_click_cooldown)
-                        prev_frame_hash = 0
 
                 if self._show_preview:
                     vis = self.detector.draw_debug(frame, targets)
@@ -269,38 +257,52 @@ class AimBot:
 def main():
     import argparse
 
+    color_names = "red, orange, yellow, green, cyan, blue, pink, white"
+
     parser = argparse.ArgumentParser(
         description="Aim Trainer 自动瞄准助手",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""\
-使用示例:
-  python main.py --preset kovaaks                   # Kovaak's 橙红目标
-  python main.py --preset white                     # 白色目标
-  python main.py --preset all --preview             # 全部颜色 + 预览
+        epilog=f"""\
+目标颜色（直接用颜色名称即可）:
+  python main.py --blue                             # 蓝色目标
+  python main.py --red                              # 红色目标
+  python main.py --orange                           # 橙色目标
+  python main.py --white                            # 白色目标
+  python main.py --red --blue                       # 同时检测红色和蓝色
+  python main.py --hsv 90,120,100,130,255,255       # 自定义 HSV 范围
+
+可用颜色: {color_names}
+
+其他示例:
+  python main.py --blue --preview                   # 蓝色 + 调试预览
+  python main.py --sensitivity 1.2                  # 手动指定灵敏度
   python main.py --no-game-mode                     # 桌面窗口模式
 
 灵敏度校准:
-  进入训练场景后按 F6 自动校准。程序会发送一个较大的测试位移，
-  通过相位相关分析测量画面实际移动了多少像素，自动算出 sensitivity。
-  也可手动指定: --sensitivity 1.2
-  如果校准失败，尝试加大测试位移: --calibrate-move 600""",
+  进入训练场景后按 F6 自动校准。""",
     )
-    parser.add_argument("--preset",
-                        choices=["kovaaks", "aimlab", "white", "all", "custom"],
-                        default="kovaaks", help="颜色预设 (默认: kovaaks)")
+
+    # ── 颜色选择（直接标志） ────────────────────────────────────
+    color_group = parser.add_argument_group("目标颜色")
+    for c in ["red", "orange", "yellow", "green", "cyan", "blue", "pink", "white"]:
+        color_group.add_argument(f"--{c}", action="store_true", help=f"{c} 目标")
+    color_group.add_argument("--hsv", type=str, default=None,
+                             help="自定义 HSV 范围: h_lo,s_lo,v_lo,h_hi,s_hi,v_hi")
+
+    # ── 其他参数 ────────────────────────────────────────────────
     parser.add_argument("--priority",
                         choices=["nearest", "largest", "center"],
                         default="nearest", help="目标优先级策略")
     parser.add_argument("--preview", action="store_true",
                         help="启动时打开调试预览窗口")
     parser.add_argument("--sensitivity", type=float, default=1.0,
-                        help="灵敏度倍率：准心移过头→调小，移不够→调大 (默认 1.0)")
+                        help="灵敏度倍率 (默认 1.0)")
     parser.add_argument("--no-game-mode", action="store_true",
-                        help="禁用游戏模式，使用绝对坐标移动（适用于桌面窗口）")
-    parser.add_argument("--dead-zone", type=int, default=5,
-                        help="死区半径像素，准心在此范围内视为到位→点击 (默认 5)")
+                        help="禁用游戏模式，使用绝对坐标（桌面窗口）")
+    parser.add_argument("--dead-zone", type=int, default=3,
+                        help="死区半径像素 (默认 3)")
     parser.add_argument("--max-move", type=int, default=500,
-                        help="单帧最大移动像素，超过视为误检丢弃 (默认 500)")
+                        help="单帧最大移动像素 (默认 500)")
     parser.add_argument("--min-area", type=int, default=30,
                         help="最小目标面积阈值")
     parser.add_argument("--max-area", type=int, default=80000,
@@ -343,23 +345,31 @@ def main():
                 "width": parts[2], "height": parts[3],
             }
 
-    from config import (KOVAAKS_ORANGE, AIMLAB_BLUE, WHITE_TARGET,
-                         RED_TARGET_LOW, RED_TARGET_HIGH, YELLOW_TARGET)
+    # ── 构建颜色列表 ────────────────────────────────────────────
+    from config import COLOR_PRESETS, ColorRange
 
-    if args.preset == "kovaaks":
+    selected_colors: list = []
+    for name, ranges in COLOR_PRESETS.items():
+        if getattr(args, name, False):
+            selected_colors.extend(ranges)
+
+    if args.hsv:
+        vals = [int(x) for x in args.hsv.split(",")]
+        if len(vals) == 6:
+            selected_colors.append(
+                ColorRange("custom_hsv", tuple(vals[:3]), tuple(vals[3:]))
+            )
+
+    if selected_colors:
+        cfg.color_ranges = selected_colors
+        cfg.enable_brightness_detect = any(
+            c.name == "white" for c in selected_colors
+        )
+    else:
+        # 没有指定任何颜色 → 默认 kovaaks 橙红
+        from config import KOVAAKS_ORANGE, RED_TARGET_LOW, RED_TARGET_HIGH
         cfg.color_ranges = [KOVAAKS_ORANGE, RED_TARGET_LOW, RED_TARGET_HIGH]
         cfg.enable_brightness_detect = False
-    elif args.preset == "aimlab":
-        cfg.color_ranges = [AIMLAB_BLUE]
-        cfg.enable_brightness_detect = False
-    elif args.preset == "white":
-        cfg.color_ranges = [WHITE_TARGET]
-        cfg.enable_brightness_detect = True
-    elif args.preset == "all":
-        cfg.color_ranges = [KOVAAKS_ORANGE, AIMLAB_BLUE,
-                            RED_TARGET_LOW, RED_TARGET_HIGH,
-                            YELLOW_TARGET, WHITE_TARGET]
-        cfg.enable_brightness_detect = True
 
     bot = AimBot(cfg)
     bot.run()

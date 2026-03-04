@@ -29,6 +29,22 @@ YELLOW_TARGET = ColorRange("yellow", (20, 100, 100), (35, 255, 255))
 PINK_TARGET = ColorRange("pink", (140, 80, 100), (170, 255, 255))
 # 白色目标（低饱和度高亮度）—— 仅作为辅助，建议配合亮度检测使用
 WHITE_TARGET = ColorRange("white", (0, 0, 200), (180, 50, 255))
+# 绿色目标
+GREEN_TARGET = ColorRange("green", (35, 100, 100), (85, 255, 255))
+# 青色目标
+CYAN_TARGET = ColorRange("cyan", (80, 100, 100), (100, 255, 255))
+
+# 按颜色名称索引，供 CLI --color 使用
+COLOR_PRESETS = {
+    "red":    [RED_TARGET_LOW, RED_TARGET_HIGH],
+    "orange": [KOVAAKS_ORANGE],
+    "yellow": [YELLOW_TARGET],
+    "green":  [GREEN_TARGET],
+    "cyan":   [CYAN_TARGET],
+    "blue":   [AIMLAB_BLUE],
+    "pink":   [PINK_TARGET],
+    "white":  [WHITE_TARGET],
+}
 
 
 @dataclass
@@ -67,13 +83,12 @@ class BotConfig:
     post_click_cooldown: float = 0.06  # 点击后冷却（秒），等目标消失再截下一帧
     dead_zone: int = 3              # 死区半径（像素），目标在此范围内做最后修正后点击
     max_move_px: int = 500          # 单帧最大移动量（像素），超过视为误检直接丢弃
-    post_move_settle: float = 0.035 # 发送移动后等待游戏渲染新帧的时间（秒）
 
     # ── 优先级策略 ──────────────────────────────────────────────
     priority: str = "nearest"       # nearest / largest / center
 
     # ── 性能 ─────────────────────────────────────────────────────
-    loop_delay: float = 0.002       # 无目标时的主循环间隔秒数
+    loop_delay: float = 0.001       # 主循环间隔秒数
     show_preview: bool = False      # 是否显示调试预览窗口
 
     # ── 灵敏度自动校准 ──────────────────────────────────────────
